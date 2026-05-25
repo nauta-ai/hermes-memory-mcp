@@ -118,12 +118,98 @@ async def test_search_memory_round_trip_returns_cited_payload(isolated_index_roo
 
 
 @pytest.mark.asyncio
-async def test_check_claim_round_trip_returns_cited_payload() -> None:
+async def test_check_claim_round_trip_returns_cited_payload(isolated_index_root) -> None:
+    """Empty index → check_claim returns 'No results' citation-shaped."""
     server = build_server()
     content = await _call_tool(server, "check_claim_against_memory", {"claim": "the sky is green"})
     payload = json.loads(content[0].text)
     assert payload["citations"] == []
     assert "No results" in payload["content"]
+
+
+@pytest.mark.asyncio
+async def test_check_claim_flags_contradiction(isolated_index_root) -> None:
+    """If a corpus passage says 'X is OBSOLETE', the claim 'X is current'
+    should come back with verdict CONTRADICTED."""
+    from hermes_memory_mcp.index import Index
+    from hermes_memory_mcp.walker import DOC_TYPE_MARKDOWN, Document
+
+    with Index.open(isolated_index_root) as ix:
+        ix.add(
+            Document(
+                file_path=isolated_index_root / "decision.md",
+                doc_type=DOC_TYPE_MARKDOWN,
+                content="The widget API is OBSOLETE and deprecated as of 2026-04",
+                mtime=1.0,
+                size=64,
+            )
+        )
+
+    server = build_server()
+    content = await _call_tool(
+        server,
+        "check_claim_against_memory",
+        {"claim": "the widget API is the current recommended approach"},
+    )
+    payload = json.loads(content[0].text)
+    assert "CONTRADICTED" in payload["content"]
+    assert any("decision.md" in c["file_path"] for c in payload["citations"])
+
+
+@pytest.mark.asyncio
+async def test_get_project_brief_compiles_corpus_summary(isolated_index_root) -> None:
+    from hermes_memory_mcp.index import Index
+    from hermes_memory_mcp.walker import (
+        DOC_TYPE_ADR,
+        DOC_TYPE_CODE,
+        DOC_TYPE_MARKDOWN,
+        Document,
+    )
+
+    readme = isolated_index_root / "README.md"
+    readme.write_text("# My Project\nThis is the README excerpt that should appear in the brief.")
+
+    with Index.open(isolated_index_root) as ix:
+        ix.add(
+            Document(
+                file_path=readme,
+                doc_type=DOC_TYPE_MARKDOWN,
+                content=readme.read_text(),
+                mtime=1.0,
+                size=64,
+            )
+        )
+        ix.add(
+            Document(
+                file_path=isolated_index_root / "main.py",
+                doc_type=DOC_TYPE_CODE,
+                content="def main(): pass",
+                mtime=2.0,
+                size=16,
+            )
+        )
+        ix.add(
+            Document(
+                file_path=isolated_index_root / "docs" / "adr" / "0001.md",
+                doc_type=DOC_TYPE_ADR,
+                content="ADR 0001",
+                mtime=3.0,
+                size=8,
+            )
+        )
+
+    server = build_server()
+    content = await _call_tool(server, "get_project_brief", {})
+    payload = json.loads(content[0].text)
+    text = payload["content"]
+    assert "Corpus" in text
+    assert "markdown" in text
+    assert "code" in text
+    assert "adr" in text
+    assert "README excerpt" in text
+    assert "Most recent changes" in text
+    # README + 3 recent rows → 4 citations
+    assert len(payload["citations"]) >= 4
 
 
 @pytest.mark.asyncio

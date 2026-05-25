@@ -190,20 +190,27 @@ class Index:
         *,
         scope: str = "all",
         limit: int = 10,
+        raw_fts: bool = False,
     ) -> list[SearchHit]:
         """Run an FTS5 search and return ranked hits.
 
         ``scope`` filters by doc_type. 'all' = no filter; the rest match
         the scopes declared in schemas.SEARCH_MEMORY_SCHEMA.
+
+        ``raw_fts``: when True, pass ``query`` through to FTS5 verbatim.
+        Useful for OR/AND/NEAR operators. When False (default), wrap the
+        query in quotes so punctuation doesn't break the parser — this is
+        what search_memory uses for natural-language queries.
         """
         if not query.strip():
             return []
 
-        # FTS5 query syntax: wrap user query in quotes so punctuation
-        # doesn't blow up the parser. Power users can pass raw FTS5 syntax
-        # by setting it through the index API directly; the MCP surface
-        # always wraps.
-        fts_query = '"' + query.replace('"', '""') + '"'
+        # FTS5 query syntax. Default: wrap in quotes so punctuation
+        # doesn't blow up the parser. raw_fts=True: trust the caller.
+        if raw_fts:
+            fts_query = query
+        else:
+            fts_query = '"' + query.replace('"', '""') + '"'
 
         if scope == "all":
             rows = self.conn.execute(
