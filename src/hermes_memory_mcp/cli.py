@@ -18,6 +18,7 @@ import argparse
 import sys
 
 from . import __version__
+from . import install as install_mod
 
 
 def cmd_version() -> int:
@@ -37,13 +38,28 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 
 def cmd_install_mcp(args: argparse.Namespace) -> int:
-    print(f"v0.1.0a1 stub: would install MCP server into {args.client!r} config")
-    print("Next session: implement claude_desktop_config.json + cursor mcp_settings.json writers.")
+    command = args.command_path or install_mod.detect_command()
+    try:
+        path = install_mod.install(args.client, command=command)
+    except Exception as exc:  # noqa: BLE001 — surface to the operator verbatim
+        print(f"install-mcp failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Wrote {args.client} config: {path}")
+    print(f"MCP server command: {command}")
+    print("Restart the client to pick up the new server.")
     return 0
 
 
 def cmd_uninstall_mcp(args: argparse.Namespace) -> int:
-    print(f"v0.1.0a1 stub: would remove MCP server entry from {args.client!r} config")
+    try:
+        path, removed = install_mod.uninstall(args.client)
+    except Exception as exc:  # noqa: BLE001
+        print(f"uninstall-mcp failed: {exc}", file=sys.stderr)
+        return 1
+    if not removed:
+        print(f"Nothing to remove from {args.client} config ({path}).")
+        return 0
+    print(f"Removed hermes-memory-mcp from {args.client} config: {path}")
     return 0
 
 
@@ -64,6 +80,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     inst = sub.add_parser("install-mcp", help="Wire MCP server into a client")
     inst.add_argument("client", choices=["claude-desktop", "cursor", "cline"])
+    inst.add_argument(
+        "--command-path",
+        default=None,
+        help=(
+            "Absolute path to the hermes-memory-mcp binary. Defaults to the "
+            "one found on PATH; pin this for venv-based installs."
+        ),
+    )
 
     uninst = sub.add_parser("uninstall-mcp", help="Remove MCP entry from a client")
     uninst.add_argument("client", choices=["claude-desktop", "cursor", "cline"])
