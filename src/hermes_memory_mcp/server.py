@@ -93,11 +93,117 @@ async def _get_project_brief(repo_or_topic: str = "current", as_of: str = "now")
 
 
 async def _find_decision(topic: str) -> CitedResponse:
-    return empty_result(f"v0.1.0a2 stub: ADR walker not yet wired (topic={topic!r})")
+    """Search the ADR corpus only. Returns every ADR mentioning the topic
+    so the agent can see the original decision + any reversals.
+
+    a4 will add explicit reversal-chain detection (parse 'Supersedes #N'
+    style links). For now we return all hits and let the agent reason."""
+    if not topic.strip():
+        return empty_result("empty topic")
+    root = _resolve_project_root()
+    try:
+        with Index.open(root) as ix:
+            if ix.doc_count() == 0:
+                return empty_result(
+                    f"index at {ix.db_path} is empty — run `hermes-memory init {root}` first"
+                )
+            hits = ix.search(topic, scope="adr", limit=20)
+    except RuntimeError as exc:
+        return empty_result(f"index error: {exc}")
+    if not hits:
+        return empty_result(f"no ADRs match {topic!r}")
+
+    lines = [f"Found {len(hits)} ADRs matching {topic!r}:"]
+    citations: list[Citation] = []
+    for i, hit in enumerate(hits, 1):
+        snippet = " ".join(hit.snippet.split())
+        lines.append(f"[{i}] {hit.file_path}")
+        lines.append(f"    {snippet}")
+        citations.append(Citation(file_path=hit.file_path, line_range=None, snippet=snippet))
+    return CitedResponse(content="\n".join(lines), citations=citations)
+
+
+def _parse_reference(reference: str) -> float | None:
+    """Parse a 'what_changed_since' reference into a Unix timestamp.
+
+    Accepts:
+      - 'last_session' → 24h ago (heuristic)
+      - 'YYYY-MM-DD'   → midnight that date, local time
+      - 'NhNm' style relative → e.g. '2h', '30m', '7d'
+
+    Returns None if the reference can't be parsed.
+    """
+    import re
+    from datetime import datetime, timedelta
+
+    ref = reference.strip().lower()
+    if ref in ("last_session", "yesterday", "1d"):
+        return (datetime.now() - timedelta(hours=24)).timestamp()
+
+    # ISO date
+    try:
+        dt = datetime.strptime(ref, "%Y-%m-%d")
+        return dt.timestamp()
+    except ValueError:
+        pass
+
+    # Relative: 7d, 2h, 30m, 90s
+    m = re.fullmatch(r"(\d+)\s*([smhd])", ref)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+        return (datetime.now() - timedelta(seconds=n * seconds)).timestamp()
+
+    return None
 
 
 async def _what_changed_since(reference: str) -> CitedResponse:
-    return empty_result(f"v0.1.0a2 stub: snapshot diff not yet wired (reference={reference!r})")
+    """Return documents whose mtime is newer than ``reference``.
+
+    Useful for catching up after time away: 'what changed since yesterday'
+    returns the diff a developer needs to skim before resuming work."""
+    cutoff = _parse_reference(reference)
+    if cutoff is None:
+        return empty_result(
+            f"could not parse reference {reference!r}; try 'last_session', "
+            "'YYYY-MM-DD', or relative '7d' / '2h' / '30m'"
+        )
+
+    root = _resolve_project_root()
+    try:
+        with Index.open(root) as ix:
+            if ix.doc_count() == 0:
+                return empty_result(
+                    f"index at {ix.db_path} is empty — run `hermes-memory init {root}` first"
+                )
+            rows = ix.conn.execute(
+                """SELECT file_path, doc_type, mtime
+                   FROM documents
+                   WHERE mtime > ?
+                   ORDER BY mtime DESC
+                   LIMIT 100""",
+                (cutoff,),
+            ).fetchall()
+    except RuntimeError as exc:
+        return empty_result(f"index error: {exc}")
+
+    if not rows:
+        return empty_result(f"no documents changed since {reference}")
+
+    # Group by doc_type so the report is scannable
+    by_type: dict[str, list] = {}
+    for row in rows:
+        by_type.setdefault(row["doc_type"], []).append(row)
+
+    lines = [f"Found {len(rows)} changes since {reference}:"]
+    citations: list[Citation] = []
+    for doc_type, entries in sorted(by_type.items()):
+        lines.append(f"\n## {doc_type} ({len(entries)})")
+        for entry in entries:
+            lines.append(f"  - {entry['file_path']}")
+            citations.append(Citation(file_path=entry["file_path"], line_range=None, snippet=None))
+    return CitedResponse(content="\n".join(lines), citations=citations)
 
 
 async def _check_claim_against_memory(claim: str) -> CitedResponse:

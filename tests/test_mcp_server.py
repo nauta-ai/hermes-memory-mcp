@@ -127,6 +127,86 @@ async def test_check_claim_round_trip_returns_cited_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_find_decision_returns_adrs_only(isolated_index_root) -> None:
+    """find_decision should return only ADRs, not all markdown."""
+    from hermes_memory_mcp.index import Index
+    from hermes_memory_mcp.walker import DOC_TYPE_ADR, DOC_TYPE_MARKDOWN, Document
+
+    with Index.open(isolated_index_root) as ix:
+        ix.add(
+            Document(
+                file_path=isolated_index_root / "regular.md",
+                doc_type=DOC_TYPE_MARKDOWN,
+                content="discussion of authentication approaches",
+                mtime=1.0,
+                size=42,
+            )
+        )
+        ix.add(
+            Document(
+                file_path=isolated_index_root / "docs" / "adr" / "0001-auth.md",
+                doc_type=DOC_TYPE_ADR,
+                content="ADR-0001: choose passwordless authentication",
+                mtime=2.0,
+                size=42,
+            )
+        )
+
+    server = build_server()
+    content = await _call_tool(server, "find_decision", {"topic": "authentication"})
+    payload = json.loads(content[0].text)
+    # Citations should reference only the ADR file
+    assert len(payload["citations"]) == 1
+    assert "adr" in payload["citations"][0]["file_path"]
+
+
+@pytest.mark.asyncio
+async def test_what_changed_since_filters_by_mtime(isolated_index_root) -> None:
+    """what_changed_since should return only docs newer than the cutoff."""
+    import time
+
+    from hermes_memory_mcp.index import Index
+    from hermes_memory_mcp.walker import DOC_TYPE_CODE, Document
+
+    now = time.time()
+    with Index.open(isolated_index_root) as ix:
+        ix.add(
+            Document(
+                file_path=isolated_index_root / "old.py",
+                doc_type=DOC_TYPE_CODE,
+                content="ancient",
+                mtime=now - 10 * 86400,  # 10 days old
+                size=7,
+            )
+        )
+        ix.add(
+            Document(
+                file_path=isolated_index_root / "new.py",
+                doc_type=DOC_TYPE_CODE,
+                content="fresh",
+                mtime=now - 60,  # 1 minute old
+                size=5,
+            )
+        )
+
+    server = build_server()
+    content = await _call_tool(server, "what_changed_since", {"reference": "1d"})
+    payload = json.loads(content[0].text)
+    citations = [c["file_path"] for c in payload["citations"]]
+    assert any("new.py" in p for p in citations)
+    assert not any("old.py" in p for p in citations)
+
+
+@pytest.mark.asyncio
+async def test_what_changed_since_rejects_unparseable_reference(isolated_index_root) -> None:
+    server = build_server()
+    content = await _call_tool(server, "what_changed_since", {"reference": "tuesday-ish maybe"})
+    payload = json.loads(content[0].text)
+    assert payload["citations"] == []
+    assert "could not parse" in payload["content"].lower()
+
+
+@pytest.mark.asyncio
 async def test_all_five_tools_invocable_through_sdk(isolated_index_root) -> None:
     """Every tool must round-trip through the SDK handlers and return a
     citation-shaped JSON payload. This is the a2 acceptance gate; a3 wired
