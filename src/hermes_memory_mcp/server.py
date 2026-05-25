@@ -20,18 +20,34 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
+from pathlib import Path
 
 from mcp import types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 
-from .cite import CitedResponse, empty_result
+from .cite import Citation, CitedResponse, empty_result
+from .index import Index
 from .schemas import TOOL_DESCRIPTIONS, TOOL_SCHEMAS
 
 SERVER_NAME = "hermes-memory-mcp"
-SERVER_VERSION = "0.1.0a2"
+SERVER_VERSION = "0.1.0a3"
+
+
+def _resolve_project_root() -> Path:
+    """Project root whose index this server queries.
+
+    Precedence: ``HERMES_MEMORY_ROOT`` env var → current working directory.
+    The MCP client (Claude Desktop / Cursor / Cline) sets cwd when it
+    spawns us, so cwd usually matches the user's active project. Env var
+    is the explicit override for multi-project setups."""
+    env = os.environ.get("HERMES_MEMORY_ROOT")
+    if env:
+        return Path(env).expanduser().resolve()
+    return Path.cwd().resolve()
 
 
 # ── Tool implementations (a2: stubs returning CitedResponse-shaped JSON) ───
@@ -44,10 +60,32 @@ SERVER_VERSION = "0.1.0a2"
 async def _search_memory(query: str, scope: str = "all", limit: int = 10) -> CitedResponse:
     if not query.strip():
         return empty_result("empty query")
-    return empty_result(
-        f"v0.1.0a2 stub: search index not yet built "
-        f"(query={query!r}, scope={scope}, limit={limit})"
-    )
+    root = _resolve_project_root()
+    try:
+        with Index.open(root) as ix:
+            if ix.doc_count() == 0:
+                return empty_result(
+                    f"index at {ix.db_path} is empty — run `hermes-memory init {root}` first"
+                )
+            hits = ix.search(query, scope=scope, limit=limit)
+    except RuntimeError as exc:
+        # e.g. schema mismatch on stale index
+        return empty_result(f"index error: {exc}")
+    if not hits:
+        return empty_result(f"no hits for {query!r} (scope={scope})")
+
+    lines = [f"Found {len(hits)} hits for {query!r} (scope={scope}):"]
+    citations: list[Citation] = []
+    for i, hit in enumerate(hits, 1):
+        # Snippet from FTS5 includes <<<...>>> markers around matched
+        # tokens; preserve them so agents can see where the hit landed.
+        snippet = " ".join(hit.snippet.split())
+        lines.append(f"[{i}] {hit.file_path} ({hit.doc_type})")
+        lines.append(f"    {snippet}")
+        citations.append(
+            Citation(file_path=hit.file_path, line_range=None, snippet=snippet)
+        )
+    return CitedResponse(content="\n".join(lines), citations=citations)
 
 
 async def _get_project_brief(repo_or_topic: str = "current", as_of: str = "now") -> CitedResponse:

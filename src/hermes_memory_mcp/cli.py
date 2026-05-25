@@ -16,9 +16,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from . import __version__
 from . import install as install_mod
+from .cite import Citation, CitedResponse
+from .index import Index
+from .walker import walk
 
 
 def cmd_version() -> int:
@@ -27,13 +31,33 @@ def cmd_version() -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    print(f"v0.1.0a1 stub: would index {args.root_path!r}")
-    print("Next session: implement filesystem walker + SQLite vector index build.")
+    root = Path(args.root_path).expanduser().resolve()
+    if not root.is_dir():
+        print(f"init: {root} is not a directory", file=sys.stderr)
+        return 1
+    print(f"Indexing {root}...")
+    with Index.open(root) as ix:
+        n = ix.add_many(walk(root))
+        breakdown = ix.doc_types()
+    print(f"Indexed {n} documents at {ix.db_path}")
+    if breakdown:
+        for doc_type, count in sorted(breakdown.items()):
+            print(f"  {doc_type}: {count}")
     return 0
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
-    print(f"v0.1.0a1 stub: would ask {args.query!r}")
+    root = Path(args.root or ".").expanduser().resolve()
+    with Index.open(root) as ix:
+        hits = ix.search(args.query, scope=args.scope, limit=args.limit)
+    if not hits:
+        print(f"No results for: {args.query!r}")
+        return 0
+    for i, hit in enumerate(hits, 1):
+        print(f"\n[{i}] {hit.file_path}  ({hit.doc_type}, rank={hit.rank:.2f})")
+        # Snippet may contain newlines from FTS5; flatten for one-line preview.
+        snippet = " ".join(hit.snippet.split())
+        print(f"    {snippet}")
     return 0
 
 
@@ -77,6 +101,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     ask = sub.add_parser("ask", help="Query the index interactively (no MCP client needed)")
     ask.add_argument("query", help="The question to ask")
+    ask.add_argument(
+        "--root",
+        default=".",
+        help="Project root whose index to query (default: current directory)",
+    )
+    ask.add_argument(
+        "--scope",
+        default="all",
+        choices=["all", "markdown", "code", "adr", "log", "git"],
+        help="Restrict the search to one doc_type",
+    )
+    ask.add_argument("--limit", type=int, default=10, help="Max results to show")
 
     inst = sub.add_parser("install-mcp", help="Wire MCP server into a client")
     inst.add_argument("client", choices=["claude-desktop", "cursor", "cline"])
