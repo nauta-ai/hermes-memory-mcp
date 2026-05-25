@@ -34,7 +34,7 @@ from .index import Index
 from .schemas import TOOL_DESCRIPTIONS, TOOL_SCHEMAS
 
 SERVER_NAME = "hermes-memory-mcp"
-SERVER_VERSION = "0.1.0a3"
+SERVER_VERSION = "0.1.0a4"
 
 
 def _resolve_project_root() -> Path:
@@ -192,11 +192,12 @@ async def _get_project_brief(repo_or_topic: str = "current", as_of: str = "now")
 
 
 async def _find_decision(topic: str) -> CitedResponse:
-    """Search the ADR corpus only. Returns every ADR mentioning the topic
-    so the agent can see the original decision + any reversals.
+    """Return the decision chain for a topic.
 
-    a4 will add explicit reversal-chain detection (parse 'Supersedes #N'
-    style links). For now we return all hits and let the agent reason."""
+    a4 layer: each matched ADR is opened on disk so we can parse its
+    Status section (parsers.parse_adr_status). Output then groups hits
+    into current (accepted/proposed/unknown) vs superseded/deprecated/
+    reverted, so the agent sees which decision is in force right now."""
     if not topic.strip():
         return empty_result("empty topic")
     root = _resolve_project_root()
@@ -206,19 +207,59 @@ async def _find_decision(topic: str) -> CitedResponse:
                 return empty_result(
                     f"index at {ix.db_path} is empty — run `hermes-memory init {root}` first"
                 )
-            hits = ix.search(topic, scope="adr", limit=20)
+            # Prefix match each topic token so 'auth' matches 'authentication'.
+            # FTS5 prefix syntax: token*
+            import re as _re
+
+            tokens = [t for t in _re.findall(r"[A-Za-z][A-Za-z0-9_-]+", topic) if t]
+            if not tokens:
+                return empty_result(f"no searchable tokens in {topic!r}")
+            fts_query = " OR ".join(f"{t}*" for t in tokens)
+            hits = ix.search(fts_query, scope="adr", limit=20, raw_fts=True)
     except RuntimeError as exc:
         return empty_result(f"index error: {exc}")
     if not hits:
         return empty_result(f"no ADRs match {topic!r}")
 
-    lines = [f"Found {len(hits)} ADRs matching {topic!r}:"]
+    from .parsers import parse_adr_status
+
+    current: list[tuple] = []
+    historical: list[tuple] = []
+    for hit in hits:
+        try:
+            text = Path(hit.file_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        status = parse_adr_status(text)
+        bucket = (
+            historical
+            if (status and status.state in ("superseded", "deprecated", "reverted", "rejected"))
+            else current
+        )
+        bucket.append((hit, status))
+
+    lines = [f"# Decision chain for {topic!r}"]
     citations: list[Citation] = []
-    for i, hit in enumerate(hits, 1):
-        snippet = " ".join(hit.snippet.split())
-        lines.append(f"[{i}] {hit.file_path}")
-        lines.append(f"    {snippet}")
-        citations.append(Citation(file_path=hit.file_path, line_range=None, snippet=snippet))
+
+    def _render(label: str, group: list) -> None:
+        if not group:
+            return
+        lines.append(f"\n## {label} ({len(group)})")
+        for hit, status in group:
+            snippet = " ".join(hit.snippet.split())
+            state_str = status.state if status else "unknown"
+            extra = (
+                f" → superseded by {status.superseded_by}"
+                if status and status.superseded_by
+                else ""
+            )
+            lines.append(f"- **[{state_str}{extra}]** `{hit.file_path}`")
+            lines.append(f"  {snippet}")
+            citations.append(Citation(file_path=hit.file_path, line_range=None, snippet=snippet))
+
+    _render("Currently in force", current)
+    _render("Superseded / historical", historical)
+
     return CitedResponse(content="\n".join(lines), citations=citations)
 
 

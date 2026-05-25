@@ -10,5 +10,5 @@ CLI entry points (see pyproject.toml [project.scripts]):
     hermes-memory-mcp  — MCP server stdin/stdout entry
 """
 
-__version__ = "0.1.0a3"
+__version__ = "0.1.0a4"
 __all__ = ["__version__"]

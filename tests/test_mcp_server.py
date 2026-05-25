@@ -213,6 +213,47 @@ async def test_get_project_brief_compiles_corpus_summary(isolated_index_root) ->
 
 
 @pytest.mark.asyncio
+async def test_find_decision_groups_by_adr_status(isolated_index_root) -> None:
+    """find_decision should split hits into 'Currently in force' vs
+    'Superseded / historical' by parsing each ADR's Status section."""
+    from hermes_memory_mcp.index import Index
+    from hermes_memory_mcp.walker import DOC_TYPE_ADR, Document
+
+    adr_dir = isolated_index_root / "docs" / "adr"
+    adr_dir.mkdir(parents=True)
+
+    # Old, superseded
+    old = adr_dir / "0001-auth.md"
+    old.write_text("# ADR-0001: passwordless auth\n## Status\nSuperseded by ADR-0007\n")
+    # New, accepted
+    new = adr_dir / "0007-auth.md"
+    new.write_text(
+        "# ADR-0007: SSO via OIDC\n## Status\nAccepted\n## Decision\nAuthentication via OIDC."
+    )
+
+    with Index.open(isolated_index_root) as ix:
+        for path in (old, new):
+            ix.add(
+                Document(
+                    file_path=path,
+                    doc_type=DOC_TYPE_ADR,
+                    content=path.read_text(),
+                    mtime=1.0,
+                    size=len(path.read_text()),
+                )
+            )
+
+    server = build_server()
+    content = await _call_tool(server, "find_decision", {"topic": "auth"})
+    payload = json.loads(content[0].text)
+    text = payload["content"]
+    assert "Currently in force" in text
+    assert "Superseded / historical" in text
+    assert "[accepted]" in text
+    assert "superseded by 0007" in text
+
+
+@pytest.mark.asyncio
 async def test_find_decision_returns_adrs_only(isolated_index_root) -> None:
     """find_decision should return only ADRs, not all markdown."""
     from hermes_memory_mcp.index import Index
