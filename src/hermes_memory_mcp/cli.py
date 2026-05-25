@@ -59,9 +59,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
             print(f"ask: {exc}", file=sys.stderr)
             return 1
     with Index.open(root) as ix:
-        hits = hybrid_search(
-            ix, args.query, scope=args.scope, limit=args.limit, embedder=embedder
-        )
+        hits = hybrid_search(ix, args.query, scope=args.scope, limit=args.limit, embedder=embedder)
     if not hits:
         print(f"No results for: {args.query!r}")
         return 0
@@ -81,8 +79,7 @@ def cmd_embed(args: argparse.Namespace) -> int:
         from .embedder import EmbedderUnavailableError, get_default
     except ImportError:
         print(
-            "embed: fastembed is not installed.\n"
-            "  pip install 'hermes-memory-mcp[embeddings]'",
+            "embed: fastembed is not installed.\n  pip install 'hermes-memory-mcp[embeddings]'",
             file=sys.stderr,
         )
         return 1
@@ -96,10 +93,7 @@ def cmd_embed(args: argparse.Namespace) -> int:
         if total == 0:
             print(f"No documents in {ix.db_path} — run `hermes-memory init {root}` first.")
             return 1
-        print(
-            f"Embedding pending documents using {embedder.model_name} "
-            f"(dim={embedder.dim})..."
-        )
+        print(f"Embedding pending documents using {embedder.model_name} (dim={embedder.dim})...")
         added = ix.embed_all_pending(embedder, batch_size=args.batch_size)
         after_embedded, total_after = ix.embedding_coverage()
     print(f"Embedded {added} documents this run.")
