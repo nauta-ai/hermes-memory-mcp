@@ -1,7 +1,8 @@
 """hermes-memory CLI — operator-facing commands.
 
-Subcommands (v0.1.0a1 placeholders; full impl in subsequent sessions):
+Subcommands:
     init           — point at a project root, build the local memory index
+    embed          — populate semantic embeddings for the local index (a5)
     ask            — interactive query against the index (no MCP client needed)
     install-mcp    — wire the MCP server into Claude Desktop / Cursor / Cline
     uninstall-mcp  — reverse of install-mcp
@@ -21,6 +22,7 @@ from pathlib import Path
 from . import __version__
 from . import install as install_mod
 from .index import Index
+from .search import hybrid_search
 from .walker import walk
 
 
@@ -47,16 +49,61 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_ask(args: argparse.Namespace) -> int:
     root = Path(args.root or ".").expanduser().resolve()
+    embedder = None
+    if args.embeddings:
+        try:
+            from .embedder import EmbedderUnavailableError, get_default
+
+            embedder = get_default()
+        except EmbedderUnavailableError as exc:
+            print(f"ask: {exc}", file=sys.stderr)
+            return 1
     with Index.open(root) as ix:
-        hits = ix.search(args.query, scope=args.scope, limit=args.limit)
+        hits = hybrid_search(
+            ix, args.query, scope=args.scope, limit=args.limit, embedder=embedder
+        )
     if not hits:
         print(f"No results for: {args.query!r}")
         return 0
     for i, hit in enumerate(hits, 1):
-        print(f"\n[{i}] {hit.file_path}  ({hit.doc_type}, rank={hit.rank:.2f})")
+        print(f"\n[{i}] {hit.file_path}  ({hit.doc_type}, rank={hit.rank:.4f})")
         # Snippet may contain newlines from FTS5; flatten for one-line preview.
         snippet = " ".join(hit.snippet.split())
         print(f"    {snippet}")
+    return 0
+
+
+def cmd_embed(args: argparse.Namespace) -> int:
+    """Populate embeddings for every doc in the index that doesn't have
+    one yet. Safe to re-run — only the NULL-embedding docs are touched."""
+    root = Path(args.root or ".").expanduser().resolve()
+    try:
+        from .embedder import EmbedderUnavailableError, get_default
+    except ImportError:
+        print(
+            "embed: fastembed is not installed.\n"
+            "  pip install 'hermes-memory-mcp[embeddings]'",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        embedder = get_default()
+    except EmbedderUnavailableError as exc:
+        print(f"embed: {exc}", file=sys.stderr)
+        return 1
+    with Index.open(root) as ix:
+        before_embedded, total = ix.embedding_coverage()
+        if total == 0:
+            print(f"No documents in {ix.db_path} — run `hermes-memory init {root}` first.")
+            return 1
+        print(
+            f"Embedding pending documents using {embedder.model_name} "
+            f"(dim={embedder.dim})..."
+        )
+        added = ix.embed_all_pending(embedder, batch_size=args.batch_size)
+        after_embedded, total_after = ix.embedding_coverage()
+    print(f"Embedded {added} documents this run.")
+    print(f"Coverage: {after_embedded}/{total_after} (was {before_embedded}/{total}).")
     return 0
 
 
@@ -112,6 +159,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Restrict the search to one doc_type",
     )
     ask.add_argument("--limit", type=int, default=10, help="Max results to show")
+    ask.add_argument(
+        "--embeddings",
+        action="store_true",
+        help="Blend FTS5 with semantic vector search via RRF. Requires the "
+        "[embeddings] extra to be installed.",
+    )
+
+    emb = sub.add_parser("embed", help="Populate semantic embeddings for the index")
+    emb.add_argument(
+        "--root",
+        default=".",
+        help="Project root whose index to embed (default: current directory)",
+    )
+    emb.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Documents to encode per FastEmbed call (default: 32)",
+    )
 
     inst = sub.add_parser("install-mcp", help="Wire MCP server into a client")
     inst.add_argument("client", choices=["claude-desktop", "cursor", "cline"])
@@ -139,6 +205,8 @@ def main() -> int:
         return cmd_init(args)
     if args.command == "ask":
         return cmd_ask(args)
+    if args.command == "embed":
+        return cmd_embed(args)
     if args.command == "install-mcp":
         return cmd_install_mcp(args)
     if args.command == "uninstall-mcp":

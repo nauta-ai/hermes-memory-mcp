@@ -22,6 +22,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from .embedder import DEFAULT_DIM, bytes_to_floats, cosine_similarity
 from .walker import Document
 
 # Bump this when schema changes; init() raises on mismatch so callers can
@@ -171,6 +172,122 @@ class Index:
             count += 1
         self.conn.commit()
         return count
+
+    # ── embeddings (a5) ──────────────────────────────────────────────
+
+    def update_embedding(self, file_path: str, embedding: bytes) -> None:
+        """Write an embedding vector for a single document.
+
+        ``embedding`` is the raw float32 bytes produced by
+        :meth:`Embedder.embed`. A no-op if no document with ``file_path``
+        exists (we'd rather skip than create a phantom row, since
+        embeddings are derivative data).
+        """
+        self.conn.execute(
+            "UPDATE documents SET embedding = ? WHERE file_path = ?",
+            (embedding, file_path),
+        )
+
+    def embed_all_pending(self, embedder, batch_size: int = 32) -> int:
+        """Encode every document whose embedding is NULL.
+
+        Batches ``batch_size`` documents at a time to amortize FastEmbed's
+        per-call setup. Re-running this is safe and incremental — already-
+        embedded docs are skipped, so it doubles as the catch-up path
+        after a fresh ``add_many()``.
+
+        Returns the number of documents newly embedded.
+        """
+        # Pull the FTS content for each pending doc, in the same batch
+        # so the embedder sees the actual indexed text (not the file from
+        # disk, which may have changed since indexing).
+        pending = self.conn.execute(
+            """SELECT d.file_path, f.content
+               FROM documents d
+               JOIN documents_fts f ON f.file_path = d.file_path
+               WHERE d.embedding IS NULL"""
+        ).fetchall()
+        if not pending:
+            return 0
+        total = 0
+        for i in range(0, len(pending), batch_size):
+            batch = pending[i : i + batch_size]
+            texts = [row["content"] for row in batch]
+            vectors = embedder.embed(texts)
+            for row, vec in zip(batch, vectors, strict=True):
+                self.update_embedding(row["file_path"], vec)
+            total += len(batch)
+        self.conn.commit()
+        return total
+
+    def embedding_coverage(self) -> tuple[int, int]:
+        """Return ``(embedded_count, total_count)``. Useful for
+        diagnostics + CLI status output."""
+        total = self.doc_count()
+        embedded = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM documents WHERE embedding IS NOT NULL"
+        ).fetchone()["n"]
+        return embedded, total
+
+    def vector_search(
+        self,
+        query_embedding: bytes,
+        *,
+        scope: str = "all",
+        limit: int = 10,
+        dim: int = DEFAULT_DIM,
+    ) -> list[SearchHit]:
+        """Brute-force cosine-similarity search over stored embeddings.
+
+        No ANN index — for the < 10 k document corpora this server targets,
+        scanning all vectors is well under 50 ms on commodity hardware
+        and avoids pulling in a vector-DB dependency. If users hit
+        latency walls we'll add sqlite-vec or hnswlib later.
+
+        Returns hits sorted by descending cosine similarity, mapped to
+        the same ``SearchHit`` shape as FTS results so callers can blend
+        them with RRF.
+        """
+        query_vec = bytes_to_floats(query_embedding, dim=dim)
+        if scope == "all":
+            rows = self.conn.execute(
+                """SELECT d.file_path, d.doc_type, d.embedding,
+                          substr(f.content, 1, 240) AS snip
+                   FROM documents d
+                   JOIN documents_fts f ON f.file_path = d.file_path
+                   WHERE d.embedding IS NOT NULL"""
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """SELECT d.file_path, d.doc_type, d.embedding,
+                          substr(f.content, 1, 240) AS snip
+                   FROM documents d
+                   JOIN documents_fts f ON f.file_path = d.file_path
+                   WHERE d.embedding IS NOT NULL AND d.doc_type = ?""",
+                (scope,),
+            ).fetchall()
+
+        scored: list[tuple[float, sqlite3.Row]] = []
+        for row in rows:
+            vec = bytes_to_floats(row["embedding"], dim=dim)
+            sim = cosine_similarity(query_vec, vec)
+            scored.append((sim, row))
+        # Highest similarity first; FTS5 BM25 ranks lower-is-better, so
+        # we flip sign for ``rank`` to keep the field's "higher = better"
+        # semantics consistent across both retrievers downstream.
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [
+            SearchHit(
+                file_path=row["file_path"],
+                doc_type=row["doc_type"],
+                # No FTS5 highlighting available on this path — return a
+                # leading-character snippet so the caller still sees what
+                # matched, just without << >> markers.
+                snippet=row["snip"],
+                rank=sim,
+            )
+            for sim, row in scored[:limit]
+        ]
 
     # ── query ─────────────────────────────────────────────────────────
 

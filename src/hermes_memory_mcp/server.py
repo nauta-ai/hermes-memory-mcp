@@ -32,9 +32,30 @@ from mcp.server.stdio import stdio_server
 from .cite import Citation, CitedResponse, empty_result
 from .index import Index
 from .schemas import TOOL_DESCRIPTIONS, TOOL_SCHEMAS
+from .search import hybrid_search
 
 SERVER_NAME = "hermes-memory-mcp"
-SERVER_VERSION = "0.1.0a4"
+SERVER_VERSION = "0.1.0a5"
+
+
+def _try_get_embedder():
+    """Return a shared :class:`Embedder` if FastEmbed is installed AND
+    the user has opted in via ``HERMES_MEMORY_EMBEDDINGS=1``, else None.
+
+    Default-off because the model download (~80 MB) on first call is a
+    surprise we don't want to inflict on a4 upgraders. Setting the env
+    var or running ``hermes-memory embed`` from the CLI flips it on.
+    """
+    if os.environ.get("HERMES_MEMORY_EMBEDDINGS", "").strip() not in {"1", "true", "yes"}:
+        return None
+    try:
+        from .embedder import get_default
+    except ImportError:
+        return None
+    try:
+        return get_default()
+    except Exception:
+        return None
 
 
 def _resolve_project_root() -> Path:
@@ -67,7 +88,9 @@ async def _search_memory(query: str, scope: str = "all", limit: int = 10) -> Cit
                 return empty_result(
                     f"index at {ix.db_path} is empty — run `hermes-memory init {root}` first"
                 )
-            hits = ix.search(query, scope=scope, limit=limit)
+            # When embeddings are enabled, hybrid_search blends FTS + cosine
+            # via RRF; otherwise it degrades cleanly to pure FTS5.
+            hits = hybrid_search(ix, query, scope=scope, limit=limit, embedder=_try_get_embedder())
     except RuntimeError as exc:
         # e.g. schema mismatch on stale index
         return empty_result(f"index error: {exc}")
