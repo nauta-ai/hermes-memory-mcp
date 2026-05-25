@@ -35,6 +35,7 @@ async def _call_tool(server, name: str, arguments: dict) -> list[types.TextConte
     resp = await handler(req)
     return resp.root.content
 
+
 EXPECTED_TOOLS = {
     "search_memory",
     "get_project_brief",
@@ -58,9 +59,7 @@ def test_every_schema_is_object_with_additional_properties_false() -> None:
         assert schema.get("additionalProperties") is False, (
             f"{name} schema must reject unknown keys (additionalProperties=False)"
         )
-        assert "properties" in schema and schema["properties"], (
-            f"{name} schema must declare properties"
-        )
+        assert schema.get("properties"), f"{name} schema must declare properties"
 
 
 def test_descriptions_explain_when_to_use_the_tool() -> None:
@@ -86,34 +85,52 @@ async def test_list_tools_returns_all_five_with_schemas() -> None:
         assert tool.inputSchema == TOOL_SCHEMAS[tool.name]
 
 
+@pytest.fixture
+def isolated_index_root(tmp_path, monkeypatch):
+    """Point search_memory at a tmp project root so tests never touch the
+    user's real ~/.hermes-memory/ indexes. We set HERMES_MEMORY_ROOT to a
+    fresh tmp dir, which the server's _resolve_project_root() reads."""
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("HERMES_MEMORY_ROOT", str(project))
+    # Also redirect default_index_dir so the index lives under tmp_path
+    # rather than ~/.hermes-memory/.
+    from hermes_memory_mcp import index as index_mod
+
+    monkeypatch.setattr(index_mod, "default_index_dir", lambda root: tmp_path / "_index")
+    return project
+
+
 @pytest.mark.asyncio
-async def test_search_memory_round_trip_returns_cited_payload() -> None:
+async def test_search_memory_round_trip_returns_cited_payload(isolated_index_root) -> None:
+    """With an empty index, search_memory returns a citation-shaped payload
+    explaining the index is empty. Confirms the tool wires through the SDK
+    correctly without polluting the user's real index."""
     server = build_server()
     content = await _call_tool(server, "search_memory", {"query": "test"})
     assert len(content) == 1
     payload = json.loads(content[0].text)
     assert "content" in payload
     assert "citations" in payload
-    # a2 stub: no results, so citations is empty AND content says so
     assert payload["citations"] == []
+    # Empty-index path triggers "No results" via empty_result()
     assert "No results" in payload["content"]
 
 
 @pytest.mark.asyncio
 async def test_check_claim_round_trip_returns_cited_payload() -> None:
     server = build_server()
-    content = await _call_tool(
-        server, "check_claim_against_memory", {"claim": "the sky is green"}
-    )
+    content = await _call_tool(server, "check_claim_against_memory", {"claim": "the sky is green"})
     payload = json.loads(content[0].text)
     assert payload["citations"] == []
     assert "No results" in payload["content"]
 
 
 @pytest.mark.asyncio
-async def test_all_five_tools_invocable_through_sdk() -> None:
+async def test_all_five_tools_invocable_through_sdk(isolated_index_root) -> None:
     """Every tool must round-trip through the SDK handlers and return a
-    citation-shaped JSON payload. This is the a2 acceptance gate."""
+    citation-shaped JSON payload. This is the a2 acceptance gate; a3 wired
+    search_memory to a real index so we use isolated_index_root."""
     server = build_server()
     sample_args = {
         "search_memory": {"query": "smoke test"},
@@ -128,6 +145,4 @@ async def test_all_five_tools_invocable_through_sdk() -> None:
         payload = json.loads(content[0].text)
         assert "content" in payload, f"{name} payload missing 'content'"
         assert "citations" in payload, f"{name} payload missing 'citations'"
-        assert isinstance(payload["citations"], list), (
-            f"{name} citations must be a list"
-        )
+        assert isinstance(payload["citations"], list), f"{name} citations must be a list"

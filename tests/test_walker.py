@@ -118,6 +118,7 @@ def test_document_dataclass_is_frozen() -> None:
         size=2,
     )
     import pytest
+
     with pytest.raises(Exception):  # noqa: B017 — FrozenInstanceError
         doc.content = "no"  # type: ignore[misc]
 

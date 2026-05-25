@@ -89,14 +89,14 @@ def test_uninstall_removes_only_our_entry(fake_config_path: Path) -> None:
 def test_uninstall_missing_entry_is_noop(fake_config_path: Path) -> None:
     fake_config_path.write_text(json.dumps({"mcpServers": {}}))
     with patch.object(install_mod, "CLIENTS", _patched_clients(fake_config_path)):
-        path, removed = install_mod.uninstall("cursor")
+        _, removed = install_mod.uninstall("cursor")
     assert removed is False
 
 
 def test_uninstall_missing_config_is_noop(fake_config_path: Path) -> None:
     # File doesn't exist
     with patch.object(install_mod, "CLIENTS", _patched_clients(fake_config_path)):
-        path, removed = install_mod.uninstall("cline")
+        _, removed = install_mod.uninstall("cline")
     assert removed is False
     assert not fake_config_path.exists()
 

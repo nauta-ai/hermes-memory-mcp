@@ -20,7 +20,6 @@ from pathlib import Path
 
 from . import __version__
 from . import install as install_mod
-from .cite import Citation, CitedResponse
 from .index import Index
 from .walker import walk
 
@@ -65,7 +64,7 @@ def cmd_install_mcp(args: argparse.Namespace) -> int:
     command = args.command_path or install_mod.detect_command()
     try:
         path = install_mod.install(args.client, command=command)
-    except Exception as exc:  # noqa: BLE001 — surface to the operator verbatim
+    except Exception as exc:
         print(f"install-mcp failed: {exc}", file=sys.stderr)
         return 1
     print(f"Wrote {args.client} config: {path}")
@@ -77,7 +76,7 @@ def cmd_install_mcp(args: argparse.Namespace) -> int:
 def cmd_uninstall_mcp(args: argparse.Namespace) -> int:
     try:
         path, removed = install_mod.uninstall(args.client)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"uninstall-mcp failed: {exc}", file=sys.stderr)
         return 1
     if not removed:

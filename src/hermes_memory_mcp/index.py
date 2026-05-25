@@ -95,7 +95,7 @@ class Index:
         self.conn = conn
 
     @classmethod
-    def open(cls, project_root: Path) -> "Index":
+    def open(cls, project_root: Path) -> Index:
         """Open (or create) the index for a project root."""
         index_dir = default_index_dir(project_root)
         index_dir.mkdir(parents=True, exist_ok=True)
@@ -105,9 +105,7 @@ class Index:
         conn.executescript(SCHEMA_SQL)
         # Record schema version. If it mismatches an existing DB, raise so
         # the caller can rebuild rather than corrupting silently.
-        existing = conn.execute(
-            "SELECT value FROM meta WHERE key='schema_version'"
-        ).fetchone()
+        existing = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         if existing is None:
             conn.execute(
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
@@ -126,7 +124,7 @@ class Index:
         conn.commit()
         return cls(db_path, conn)
 
-    def __enter__(self) -> "Index":
+    def __enter__(self) -> Index:
         return self
 
     def __exit__(self, *exc: object) -> None:

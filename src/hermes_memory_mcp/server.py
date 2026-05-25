@@ -82,35 +82,26 @@ async def _search_memory(query: str, scope: str = "all", limit: int = 10) -> Cit
         snippet = " ".join(hit.snippet.split())
         lines.append(f"[{i}] {hit.file_path} ({hit.doc_type})")
         lines.append(f"    {snippet}")
-        citations.append(
-            Citation(file_path=hit.file_path, line_range=None, snippet=snippet)
-        )
+        citations.append(Citation(file_path=hit.file_path, line_range=None, snippet=snippet))
     return CitedResponse(content="\n".join(lines), citations=citations)
 
 
 async def _get_project_brief(repo_or_topic: str = "current", as_of: str = "now") -> CitedResponse:
     return empty_result(
-        f"v0.1.0a2 stub: brief compiler not yet wired "
-        f"(topic={repo_or_topic}, as_of={as_of})"
+        f"v0.1.0a2 stub: brief compiler not yet wired (topic={repo_or_topic}, as_of={as_of})"
     )
 
 
 async def _find_decision(topic: str) -> CitedResponse:
-    return empty_result(
-        f"v0.1.0a2 stub: ADR walker not yet wired (topic={topic!r})"
-    )
+    return empty_result(f"v0.1.0a2 stub: ADR walker not yet wired (topic={topic!r})")
 
 
 async def _what_changed_since(reference: str) -> CitedResponse:
-    return empty_result(
-        f"v0.1.0a2 stub: snapshot diff not yet wired (reference={reference!r})"
-    )
+    return empty_result(f"v0.1.0a2 stub: snapshot diff not yet wired (reference={reference!r})")
 
 
 async def _check_claim_against_memory(claim: str) -> CitedResponse:
-    return empty_result(
-        f"v0.1.0a2 stub: contradiction check not yet wired (claim={claim!r})"
-    )
+    return empty_result(f"v0.1.0a2 stub: contradiction check not yet wired (claim={claim!r})")
 
 
 TOOLS: dict[str, callable] = {

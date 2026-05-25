@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from hermes_memory_mcp import index as index_mod
-from hermes_memory_mcp.index import Index, SearchHit, SCHEMA_VERSION
+from hermes_memory_mcp.index import SCHEMA_VERSION, Index, SearchHit
 from hermes_memory_mcp.walker import (
     DOC_TYPE_ADR,
     DOC_TYPE_CODE,
@@ -26,9 +26,7 @@ from hermes_memory_mcp.walker import (
 def tmp_index(tmp_path: Path) -> Index:
     """An Index rooted at tmp_path. Uses patch to redirect
     default_index_dir so we don't write under ~/.hermes-memory."""
-    with patch.object(
-        index_mod, "default_index_dir", lambda root: tmp_path / "_index"
-    ):
+    with patch.object(index_mod, "default_index_dir", lambda root: tmp_path / "_index"):
         ix = Index.open(tmp_path)
     yield ix
     ix.close()
@@ -45,9 +43,7 @@ def _doc(path: Path, content: str, doc_type: str = DOC_TYPE_MARKDOWN) -> Documen
 
 
 def test_open_creates_schema_with_version(tmp_index: Index) -> None:
-    row = tmp_index.conn.execute(
-        "SELECT value FROM meta WHERE key = 'schema_version'"
-    ).fetchone()
+    row = tmp_index.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     assert int(row["value"]) == SCHEMA_VERSION
 
 
@@ -136,9 +132,7 @@ def test_schema_version_mismatch_raises(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    with patch.object(
-        index_mod, "default_index_dir", lambda root: index_dir
-    ):
+    with patch.object(index_mod, "default_index_dir", lambda root: index_dir):
         with pytest.raises(RuntimeError, match="schema_version"):
             Index.open(tmp_path)
 

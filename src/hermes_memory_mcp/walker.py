@@ -16,9 +16,9 @@ in source repos. Users can override via the ``extra_ignore`` argument.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 # Doc types map to parser dispatch in parsers.py. Keep in sync.
 DOC_TYPE_MARKDOWN = "markdown"
@@ -58,19 +58,39 @@ DEFAULT_IGNORE_DIRS = frozenset(
 # data files) is skipped silently.
 CODE_EXTENSIONS = frozenset(
     {
-        ".py", ".pyi",
+        ".py",
+        ".pyi",
         ".rs",
-        ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
         ".go",
-        ".java", ".kt", ".scala",
+        ".java",
+        ".kt",
+        ".scala",
         ".rb",
-        ".c", ".cc", ".cpp", ".h", ".hpp",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
         ".swift",
-        ".sh", ".bash", ".zsh",
+        ".sh",
+        ".bash",
+        ".zsh",
         ".sql",
-        ".toml", ".yaml", ".yml", ".json",
-        ".html", ".css", ".scss",
-        ".svelte", ".vue",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".html",
+        ".css",
+        ".scss",
+        ".svelte",
+        ".vue",
     }
 )
 

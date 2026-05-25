@@ -48,7 +48,13 @@ def _claude_desktop_config_path() -> Path:
     Windows:  %APPDATA%\\Claude\\claude_desktop_config.json
     """
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
     if sys.platform.startswith("win"):
         appdata = os.environ.get("APPDATA")
         if not appdata:
@@ -67,11 +73,16 @@ def _cursor_config_path() -> Path:
 def _cline_config_path() -> Path:
     """Cline stores MCP config under the VS Code globalStorage path.
 
-    macOS:    ~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json
-    Linux:    ~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json
-    Windows:  %APPDATA%\\Code\\User\\globalStorage\\saoudrizwan.claude-dev\\settings\\cline_mcp_settings.json
+    Path under each OS root:
+      User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json
     """
-    sub = Path("User") / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
+    sub = (
+        Path("User")
+        / "globalStorage"
+        / "saoudrizwan.claude-dev"
+        / "settings"
+        / "cline_mcp_settings.json"
+    )
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "Code" / sub
     if sys.platform.startswith("win"):

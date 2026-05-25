@@ -19,8 +19,7 @@ SEARCH_MEMORY_SCHEMA: dict = {
         "query": {
             "type": "string",
             "description": (
-                "Free-text query. Treat it as natural language, not a regex "
-                "or keyword expression."
+                "Free-text query. Treat it as natural language, not a regex or keyword expression."
             ),
         },
         "scope": {
