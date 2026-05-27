@@ -84,6 +84,40 @@ def test_search_filters_by_scope(tmp_path: Path, tmp_index: Index) -> None:
     assert code_hits[0].doc_type == DOC_TYPE_CODE
 
 
+def test_normalize_scope_maps_mcp_names_to_doc_types() -> None:
+    """The MCP tool schema exposes 'notes'/'decisions'/'logs' to clients,
+    but the walker writes 'markdown'/'adr'/'log'. _normalize_scope must
+    map MCP-facing names to walker doc_types so MCP callers don't get
+    silently-empty results. Canonical doc_types pass through unchanged."""
+    from hermes_memory_mcp.index import _normalize_scope
+    # MCP-facing aliases
+    assert _normalize_scope("notes") == "markdown"
+    assert _normalize_scope("decisions") == "adr"
+    assert _normalize_scope("logs") == "log"
+    # Canonical doc_types — pass-through
+    assert _normalize_scope("markdown") == "markdown"
+    assert _normalize_scope("code") == "code"
+    assert _normalize_scope("adr") == "adr"
+    assert _normalize_scope("log") == "log"
+    assert _normalize_scope("git") == "git"
+    # Sentinel
+    assert _normalize_scope("all") == "all"
+
+
+def test_search_with_mcp_scope_alias(tmp_path: Path, tmp_index: Index) -> None:
+    """End-to-end: an MCP client passing scope='notes' must hit the same
+    documents that the walker tagged as doc_type='markdown'. This is the
+    bug that made early Cursor integrations return zero results on a
+    populated index."""
+    tmp_index.add(_doc(tmp_path / "a.md", "synapse", DOC_TYPE_MARKDOWN))
+    tmp_index.add(_doc(tmp_path / "b.py", "synapse", DOC_TYPE_CODE))
+
+    md_hits = tmp_index.search("synapse", scope=DOC_TYPE_MARKDOWN)
+    notes_hits = tmp_index.search("synapse", scope="notes")
+    assert len(notes_hits) == len(md_hits) == 1
+    assert notes_hits[0].file_path == md_hits[0].file_path
+
+
 def test_search_respects_limit(tmp_path: Path, tmp_index: Index) -> None:
     for i in range(20):
         tmp_index.add(_doc(tmp_path / f"d{i}.md", f"doc {i} matches widget"))

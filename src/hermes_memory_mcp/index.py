@@ -30,6 +30,25 @@ from .walker import Document
 SCHEMA_VERSION = 1
 
 
+# MCP clients (and the search_memory tool schema) expose human-friendly scope
+# names — 'notes', 'decisions', 'logs' — but the walker writes the underlying
+# doc_types as 'markdown', 'adr', 'log'. Normalize at the search boundary so
+# either set works. CLI users passing 'markdown' get a no-op; MCP callers
+# passing 'notes' get correctly mapped to 'markdown'. Keep this list in sync
+# with schemas.SEARCH_MEMORY_SCHEMA enum.
+_SCOPE_ALIASES = {
+    "notes": "markdown",
+    "decisions": "adr",
+    "logs": "log",
+}
+
+
+def _normalize_scope(scope: str) -> str:
+    """Map MCP-facing scope names to walker doc_types. Pass-through for
+    already-canonical values ('all', 'markdown', 'code', 'adr', 'log', 'git')."""
+    return _SCOPE_ALIASES.get(scope, scope)
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -249,6 +268,7 @@ class Index:
         them with RRF.
         """
         query_vec = bytes_to_floats(query_embedding, dim=dim)
+        scope = _normalize_scope(scope)
         if scope == "all":
             rows = self.conn.execute(
                 """SELECT d.file_path, d.doc_type, d.embedding,
@@ -321,6 +341,8 @@ class Index:
         """
         if not query.strip():
             return []
+
+        scope = _normalize_scope(scope)
 
         # FTS5 query syntax. Default: wrap in quotes so punctuation
         # doesn't blow up the parser. raw_fts=True: trust the caller.
